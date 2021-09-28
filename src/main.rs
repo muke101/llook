@@ -2,9 +2,10 @@ use std::process::Command;
 use std::path::Path;
 use std::io::{self, BufReader, BufRead};
 use std::fs::{File, read_to_string};
+use std::ptr::null;
 use inkwell::module::Module;
 use inkwell::context::Context;
-use inkwell::values::{BasicValueEnum, FunctionValue, InstructionValue};
+use inkwell::values::*;
 use inkwell::basic_block::BasicBlock;
 use either::Either;
 use std::collections::HashMap;
@@ -36,48 +37,63 @@ fn get_lines() -> Vec<String>  {
               .collect::<Vec<_>>();
 }
 
-fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, HashMap<&str, u32>)  {
-    let mut blocks: HashMap<&str, u32> = HashMap::new();
-    let mut func_lines: HashMap<&str, u32> = HashMap::new();
+fn parse_block_name(line: &str) -> &str {
+        let len = line.len();
+        let mut a = 0;
+        let mut b = len-3;
+        match line.find(" ")    {
+            Some(_) => {a += 1; b -= 1;},
+            None => (),
+        };
+        return &line[a..b];
+}
+
+struct TextData<'a> {
+    line_number: u32,
+    name: &'a str,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum LLVMValue<'a>  {
+    ArrayValue(ArrayValue<'a>),
+    IntValue(IntValue<'a>),
+    FloatValue(FloatValue<'a>),
+    PointerValue(PointerValue<'a>),
+    StructValue(StructValue<'a>),
+    VectorValue(VectorValue<'a>),
+    BasicBlockValue(BasicBlock<'a>),
+    FunctionValue(FunctionValue<'a>),
+}
+
+fn get_line_numbers<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
+    let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
     let block = Regex::new(r"^.:\n$").unwrap();
     let func = Regex::new(r"^define ").unwrap();
     let func_name = Regex::new(r#".*@(".*"|.*)\("#).unwrap();
+    let mut current_blocks: Vec<BasicBlock>;
 
     for (i, line) in lines.iter().enumerate()   {
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
         if block.is_match(line) {
-            let len = line.len();
-            let mut a = 0;
-            let mut b = len-3;
-            match line.find(" ")    {
-                Some(_) => {a += 1; b -= 1;},
-                None => (),
-            };
-            blocks.insert(&line[a..b], i as u32);
+            let ssa_name = parse_block_name(line);
+            for block in current_blocks.iter()  {
+                if ssa_name == block.get_name().to_str().unwrap() {
+                    ir_map.insert(LLVMValue::BasicBlockValue(*block),
+                                  TextData { line_number: i as u32, name: ssa_name, });
+                }
+            }
         }
         else if func.is_match(line) {
-            let name = func_name.find(line).unwrap();
-            //TODO: might not have to subtract 1 on end
-            func_lines.insert(&line[name.start()..name.end()-1], i as u32);
+            let ssa_name = func_name.find(line).unwrap();
+            let ssa_name = &line[ssa_name.start()..ssa_name.end()-1]; //TODO: might not have to subtract 1 on end
+            let func = module.get_function(ssa_name).unwrap();
+            ir_map.insert(LLVMValue::FunctionValue(func),
+                          TextData { line_number: i as u32, name: ssa_name });
+            current_blocks = func.get_basic_blocks();
         }
     }
 
-    return (blocks, func_lines);
-}
-
-fn map_names<'a, 'b>(module: &'a Module, func_names: &'b Vec<&str>, block_names: &'b Vec<&str>) -> (HashMap<&'b str, BasicBlock<'a>>, HashMap<&'b str, FunctionValue<'a>>) {
-    let mut blocks: HashMap<&str, BasicBlock> = HashMap::new();
-    let mut functions: HashMap<&str, FunctionValue> = HashMap::new();
-
-    for name in func_names.iter()   {
-        let func = module.get_function(name).unwrap();
-        functions.insert(name, func);
-        for block in func.get_basic_blocks().iter() {
-            blocks.insert(name, *block);
-        }
-    }
-
-    return (blocks, functions);
+    return ir_map;
 }
 
 /*
