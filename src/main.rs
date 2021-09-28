@@ -4,7 +4,7 @@ use std::io::{self, BufReader, BufRead};
 use std::fs::{File, read_to_string};
 use inkwell::module::Module;
 use inkwell::context::Context;
-use inkwell::values::{BasicValueEnum, InstructionValue};
+use inkwell::values::{BasicValueEnum, FunctionValue, InstructionValue};
 use inkwell::basic_block::BasicBlock;
 use either::Either;
 use std::collections::HashMap;
@@ -39,10 +39,10 @@ fn get_lines() -> Vec<String>  {
 fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, HashMap<&str, u32>)  {
     let mut blocks: HashMap<&str, u32> = HashMap::new();
     let mut func_lines: HashMap<&str, u32> = HashMap::new();
-
     let block = Regex::new(r"^.:\n$").unwrap();
     let func = Regex::new(r"^define ").unwrap();
     let func_name = Regex::new(r#".*@(".*"|.*)\("#).unwrap();
+
     for (i, line) in lines.iter().enumerate()   {
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
         if block.is_match(line) {
@@ -65,11 +65,20 @@ fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, HashMap<&str, u
     return (blocks, func_lines);
 }
 
-// fn map_blocks(module: &Module) {
-//     let mut blocks: HashMap<&str, BasicBlock> = HashMap::new();
+fn map_names<'a, 'b>(module: &'a Module, func_names: &'b Vec<&str>, block_names: &'b Vec<&str>) -> (HashMap<&'b str, BasicBlock<'a>>, HashMap<&'b str, FunctionValue<'a>>) {
+    let mut blocks: HashMap<&str, BasicBlock> = HashMap::new();
+    let mut functions: HashMap<&str, FunctionValue> = HashMap::new();
 
-//     for func in
-// }
+    for name in func_names.iter()   {
+        let func = module.get_function(name).unwrap();
+        functions.insert(name, func);
+        for block in func.get_basic_blocks().iter() {
+            blocks.insert(name, *block);
+        }
+    }
+
+    return (blocks, functions);
+}
 
 /*
  * iterate over lines, map function and basic block names to line numbers
