@@ -36,10 +36,12 @@ fn get_lines() -> Vec<String>  {
               .collect::<Vec<_>>();
 }
 
-fn map_block_line_numbers(lines: &Vec<String>) -> HashMap<&str, u32>  {
-    let mut block_lines: HashMap<&str, u32> = HashMap::new();
+fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, Vec<u32>)  {
+    let mut blocks: HashMap<&str, u32> = HashMap::new(); //ssa name to line number
+    let mut func_lines = Vec::new();
 
     let block = Regex::new(r"^.:\n$").unwrap();
+    let func = Regex::new(r"^define ").unwrap();
     for (i, line) in lines.iter().enumerate()   {
         if block.is_match(line) {
             let len = line.len();
@@ -49,11 +51,14 @@ fn map_block_line_numbers(lines: &Vec<String>) -> HashMap<&str, u32>  {
                 Some(_) => {a += 1; b -= 1;},
                 None => (),
             };
-            block_lines.insert(&line[a..b], i as u32);
+            blocks.insert(&line[a..b], i as u32);
+        }
+        else if func.is_match(line) {
+            func_lines.push(i as u32);
         }
     }
 
-    return block_lines;
+    return (blocks, func_lines);
 }
 
 /*
