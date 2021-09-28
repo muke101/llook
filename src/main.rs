@@ -36,13 +36,15 @@ fn get_lines() -> Vec<String>  {
               .collect::<Vec<_>>();
 }
 
-fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, Vec<u32>)  {
-    let mut blocks: HashMap<&str, u32> = HashMap::new(); //ssa name to line number
-    let mut func_lines = Vec::new();
+fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, HashMap<&str, u32>)  {
+    let mut blocks: HashMap<&str, u32> = HashMap::new();
+    let mut func_lines: HashMap<&str, u32> = HashMap::new();
 
     let block = Regex::new(r"^.:\n$").unwrap();
     let func = Regex::new(r"^define ").unwrap();
+    let func_name = Regex::new(r#".*@(".*"|.*)\("#).unwrap();
     for (i, line) in lines.iter().enumerate()   {
+        let line = line.trim_start_matches(|c: char| c.is_whitespace());
         if block.is_match(line) {
             let len = line.len();
             let mut a = 0;
@@ -54,12 +56,20 @@ fn get_line_numbers(lines: &Vec<String>) -> (HashMap<&str, u32>, Vec<u32>)  {
             blocks.insert(&line[a..b], i as u32);
         }
         else if func.is_match(line) {
-            func_lines.push(i as u32);
+            let name = func_name.find(line).unwrap();
+            //TODO: might not have to subtract 1 on end
+            func_lines.insert(&line[name.start()..name.end()-1], i as u32);
         }
     }
 
     return (blocks, func_lines);
 }
+
+// fn map_blocks(module: &Module) {
+//     let mut blocks: HashMap<&str, BasicBlock> = HashMap::new();
+
+//     for func in
+// }
 
 /*
  * iterate over lines, map function and basic block names to line numbers
