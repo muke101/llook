@@ -18,17 +18,11 @@ struct TextData<'a> {
 
 #[derive(PartialEq, Eq, Hash)]
 enum LLVMValue<'a>  {
-    ArrayValue(ArrayValue<'a>),
-    IntValue(IntValue<'a>),
-    FloatValue(FloatValue<'a>),
-    PointerValue(PointerValue<'a>),
-    StructValue(StructValue<'a>),
-    VectorValue(VectorValue<'a>),
+    BasicValue(BasicValueEnum<'a>),
+    InstructionValue(InstructionValue<'a>),
     BasicBlockValue(BasicBlock<'a>),
     FunctionValue(FunctionValue<'a>),
-    InstructionValue(InstructionValue<'a>),
 }
-
 
 fn get_test_ir(ctx: &Context) -> Module  {
     Command::new("llvm-as").arg("test.ll");
@@ -36,15 +30,13 @@ fn get_test_ir(ctx: &Context) -> Module  {
     return Module::parse_bitcode_from_path(p, ctx).unwrap();
 }
 
-fn get_first_inst<'a>(module: &'a Module) -> InstructionValue<'a> {
-    let func = module.get_first_function().unwrap();
-    let entry = func.get_basic_blocks()[0];
-    return entry.get_first_instruction().unwrap();
-}
-
-fn get_defs<'a>(inst: &'a InstructionValue) -> Vec<Either<BasicValueEnum<'a>, BasicBlock<'a>>>   {
-    return (0..inst.get_num_operands()).map(|i| inst.get_operand(i)
-                                            .unwrap())
+//TODO: investigate what happens when an operand is a function
+fn get_defs<'a>(inst: &'a InstructionValue) -> Vec<LLVMValue<'a>>   {
+    return (0..inst.get_num_operands()).map(|i|
+                                            inst.get_operand(i)
+                                                .unwrap()
+                                                .either(|op| LLVMValue::BasicValue(op),
+                                                        |op| LLVMValue::BasicBlockValue(op)))
                                        .collect::<Vec<_>>();
 }
 
@@ -61,10 +53,9 @@ fn parse_block_name(line: &str) -> &str {
         let mut a = 0;
         let mut b = len-3;
         match line.find(" ")    {
-            Some(_) => {a += 1; b -= 1;},
-            None => (),
-        };
-        return &line[a..b];
+            Some(_) => &line[a+1..b-1],
+            None => &line[a..b],
+        }
 }
 
 fn parse_inst<'a, 'b>(i: u32, next_inst: Option<InstructionValue>, ir_map: &HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
@@ -113,8 +104,8 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
     for (i, line) in lines.iter().enumerate()   {
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
         if in_block {
-            let ret = parse_inst(i as u32, next_inst, &ir_map);
             //tuple unpacking for assignment is still unstable :(
+            let ret = parse_inst(i as u32, next_inst, &ir_map);
             next_inst = ret.0;
             in_block = ret.1;
         }
