@@ -11,6 +11,25 @@ use either::Either;
 use std::collections::HashMap;
 use regex::Regex;
 
+struct TextData<'a> {
+    line_number: u32,
+    name: &'a str,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum LLVMValue<'a>  {
+    ArrayValue(ArrayValue<'a>),
+    IntValue(IntValue<'a>),
+    FloatValue(FloatValue<'a>),
+    PointerValue(PointerValue<'a>),
+    StructValue(StructValue<'a>),
+    VectorValue(VectorValue<'a>),
+    BasicBlockValue(BasicBlock<'a>),
+    FunctionValue(FunctionValue<'a>),
+    InstructionValue(InstructionValue<'a>),
+}
+
+
 fn get_test_ir(ctx: &Context) -> Module  {
     Command::new("llvm-as").arg("test.ll");
     let p = Path::new("./test.bc");
@@ -48,62 +67,68 @@ fn parse_block_name(line: &str) -> &str {
         return &line[a..b];
 }
 
-struct TextData<'a> {
-    line_number: u32,
-    name: &'a str,
+fn parse_inst<'a, 'b>(i: u32, next_inst: Option<InstructionValue>, ir_map: &HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
+    let inst = next_inst.unwrap();
+    let ssa_name = inst.get_name();
+    ir_map.insert(LLVMValue::InstructionValue(inst),
+                  TextData { line_number: i, name: ssa_name });
+    next_inst = inst.get_next_instruction();
+    if next_inst == None {
+        return (next_inst, false);
+    }
+    return (next_inst, true);
 }
 
-#[derive(PartialEq, Eq, Hash)]
-enum LLVMValue<'a>  {
-    ArrayValue(ArrayValue<'a>),
-    IntValue(IntValue<'a>),
-    FloatValue(FloatValue<'a>),
-    PointerValue(PointerValue<'a>),
-    StructValue(StructValue<'a>),
-    VectorValue(VectorValue<'a>),
-    BasicBlockValue(BasicBlock<'a>),
-    FunctionValue(FunctionValue<'a>),
+fn parse_block<'a, 'b>(i: u32, line: &'a str, current_blocks: &'b Vec<BasicBlock>, ir_map: &HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
+    let ssa_name = parse_block_name(line);
+    for block in current_blocks.iter()  {
+        if ssa_name == block.get_name().to_str().unwrap() {
+            ir_map.insert(LLVMValue::BasicBlockValue(*block),
+                          TextData { line_number: i as u32, name: ssa_name });
+            return block.get_first_instruction();
+            }
+        }
+    return None;
 }
 
-fn get_line_numbers<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
+fn parse_func<'a, 'b>(i: u32, line: &'a str, func_name: Regex, module: &'b Module, ir_map: &HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<BasicBlock<'b>>    {
+    let ssa_name = func_name.find(line).unwrap();
+    let ssa_name = &line[ssa_name.start()..ssa_name.end()-1]; //TODO: might not have to subtract 1 on end
+    let func = module.get_function(ssa_name).unwrap();
+    ir_map.insert(LLVMValue::FunctionValue(func),
+                  TextData { line_number: i as u32, name: ssa_name });
+    return func.get_basic_blocks();
+}
+
+//TODO: make these functions methods of ir_map, impl get_name
+fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
     let block = Regex::new(r"^.:\n$").unwrap();
     let func = Regex::new(r"^define ").unwrap();
     let func_name = Regex::new(r#".*@(".*"|.*)\("#).unwrap();
-    let mut current_blocks: Vec<BasicBlock>;
+    let mut current_blocks: Vec<BasicBlock> = Vec::new();
+    let mut in_block = false;
+    let mut next_inst: Option<InstructionValue> = None;
 
     for (i, line) in lines.iter().enumerate()   {
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
-        if block.is_match(line) {
-            let ssa_name = parse_block_name(line);
-            for block in current_blocks.iter()  {
-                if ssa_name == block.get_name().to_str().unwrap() {
-                    ir_map.insert(LLVMValue::BasicBlockValue(*block),
-                                  TextData { line_number: i as u32, name: ssa_name, });
-                }
-            }
+        if in_block {
+            let ret = parse_inst(i as u32, next_inst, &ir_map);
+            //tuple unpacking for assignment is still unstable :(
+            next_inst = ret.0;
+            in_block = ret.1;
+        }
+        else if block.is_match(line) {
+            in_block = true;
+            next_inst = parse_block(i as u32, line, &current_blocks, &ir_map);
         }
         else if func.is_match(line) {
-            let ssa_name = func_name.find(line).unwrap();
-            let ssa_name = &line[ssa_name.start()..ssa_name.end()-1]; //TODO: might not have to subtract 1 on end
-            let func = module.get_function(ssa_name).unwrap();
-            ir_map.insert(LLVMValue::FunctionValue(func),
-                          TextData { line_number: i as u32, name: ssa_name });
-            current_blocks = func.get_basic_blocks();
+            current_blocks = parse_func(i as u32, line, func_name, module, &ir_map);
         }
     }
 
     return ir_map;
 }
-
-/*
- * iterate over lines, map function and basic block names to line numbers
- * map names to objects
- * iterate through lines, for each basic block find it's object
- * iterate through instructions of basic block object
- * map instructions to line numbers after basic block sequentially
- * save their names
- */
 
 fn main() {
     let ctx = Context::create();
