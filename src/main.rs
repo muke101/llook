@@ -1,5 +1,6 @@
-use std::borrow::Borrow;
+use std::ffi::CStr;
 use std::fs::read_to_string;
+use std::os::raw::c_char;
 use std::process::Command;
 use std::path::Path;
 use inkwell::module::Module;
@@ -7,11 +8,11 @@ use inkwell::context::Context;
 use inkwell::values::*;
 use inkwell::basic_block::BasicBlock;
 use std::collections::HashMap;
-use regex::Regex;
+use regex::{Match, Regex};
 use either::Either;
 
 struct TextData<'a> {
-    line_number: u32,
+    line_number: usize,
     name: &'a str,
 }
 
@@ -24,8 +25,8 @@ enum LLVMValue<'a>  {
 }
 
 fn get_test_ir(ctx: &Context) -> Module  {
-    Command::new("llvm-as").arg("test.ll");
-    let p = Path::new("./test.bc");
+    Command::new("llvm-as").arg("/home/muke/Programming/llook/test.ll");
+    let p = Path::new("/home/muke/Programming/llook/test.bc");
     return Module::parse_bitcode_from_path(p, ctx).unwrap();
 }
 
@@ -40,27 +41,18 @@ fn get_defs<'a>(inst: &'a InstructionValue) -> Vec<LLVMValue<'a>>   {
 }
 
 fn get_lines() -> Vec<String>  {
-    let path = Path::new("./test.ll");
+    let path = Path::new("/home/muke/Programming/llook/test.ll");
     let raw = read_to_string(path).unwrap();
     return raw.lines()
               .map(String::from)
               .collect::<Vec<_>>();
 }
 
-fn parse_block_name(line: &str) -> &str {
-        let len = line.len();
-        let a = 0;
-        let b = len-3;
-        match line.find(" ")    {
-            Some(_) => &line[a+1..b-1],
-            None => &line[a..b],
-        }
-}
+extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
-fn parse_inst<'a, 'b>(i: u32, next_inst: &mut Option<InstructionValue<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
+fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
     let inst = next_inst.unwrap();
-    //let ssa_name = inst.get_name();
-    let ssa_name = "hello";
+    let ssa_name = unsafe { CStr::from_ptr(get_name(inst)).to_str().unwrap() };
     ir_map.insert(LLVMValue::Instruction(inst),
                   TextData { line_number: i, name: ssa_name });
     *next_inst = inst.get_next_instruction();
@@ -70,68 +62,61 @@ fn parse_inst<'a, 'b>(i: u32, next_inst: &mut Option<InstructionValue<'b>>, ir_m
     return (*next_inst, true);
 }
 
-fn parse_block<'a, 'b>(i: u32, line: &'a str, current_blocks: Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
-    let ssa_name = parse_block_name(line);
+fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
     for block in current_blocks.iter()  {
         if ssa_name == block.get_name().to_str().unwrap() {
             ir_map.insert(LLVMValue::BasicBlock(*block),
-                          TextData { line_number: i as u32, name: ssa_name });
+                          TextData { line_number: i, name: ssa_name });
             return block.get_first_instruction();
         }
     }
     return None;
 }
 
-fn parse_func<'a, 'b>(i: u32, line: &'a str, func_name: &Regex, module: &'b Module, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<BasicBlock<'b>>    {
-    let ssa_name = func_name.find(line).unwrap();
-    let ssa_name = &line[ssa_name.start()..ssa_name.end()-1]; //TODO: might not have to subtract 1 on end
+fn parse_func<'a, 'b>(i: usize, ssa_name: &'a str, module: &'b Module, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<BasicBlock<'b>>    {
     let func = module.get_function(ssa_name).unwrap();
     ir_map.insert(LLVMValue::Function(func),
-                  TextData { line_number: i as u32, name: ssa_name });
+                  TextData { line_number: i, name: ssa_name });
     return func.get_basic_blocks();
 }
 
-fn test2(foo: &Vec<u32>)    {
-    println!("{}", foo[0]);
-}
-
-fn test(a: u32, b: u32)   {
-    let mut foo: Vec<u32> = Vec::new();
-    for i in a..b  {
-        if i == 10   {
-            foo[0] = 1 as u32;
-        }
-        else {
-            test2(&foo);
-        }
+fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
+    let mut ssa_name = &line[a..b];
+    if let Some(_) = ssa_name.find("\"") {
+        ssa_name = &line[a+1..b-1];
     }
+    return ssa_name;
 }
-
-//TODO: make these functions methods of ir_map, impl get_name
 
 fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
-    let block = Regex::new(r"^.:\n$").unwrap();
-    let func = Regex::new(r"^define ").unwrap();
-    let func_name = Regex::new(r#".*@(".*"|.*)\("#).unwrap();
+    let block = Regex::new(r#"^(".*"|.*):"#).unwrap();
+    let func = Regex::new(r#"^define.*@(".*"|.*)\("#).unwrap();
     let mut current_blocks: Vec<BasicBlock> = Vec::new();
     let mut in_block = false;
     let mut next_inst: Option<InstructionValue> = None;
 
     for (i, line) in lines.iter().enumerate()   {
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
+        println!("{}", line);
         if in_block {
             //tuple unpacking for assignment is still unstable :(
-            let ret = parse_inst(i as u32, &mut next_inst, &mut ir_map);
+            let ret = parse_inst(i, &mut next_inst, &mut ir_map);
             next_inst = ret.0;
             in_block = ret.1;
         }
-        else if block.is_match(line) {
+        else if let Some(name_bounds) = block.find(line)    {
             in_block = true;
-            next_inst = parse_block(i as u32, line, current_blocks.clone(), &mut ir_map);
+            let a = name_bounds.start();
+            let b = name_bounds.end()-2;
+            let ssa_name = strip_quotes(a, b, line);
+            next_inst = parse_block(i, ssa_name, current_blocks.clone(), &mut ir_map);
         }
-        else if func.is_match(line) {
-            current_blocks = parse_func(i as u32, line, &func_name, module, &mut ir_map);
+        else if let Some(name_bounds) = func.find(line) {
+            let a = name_bounds.start()+1;
+            let b = name_bounds.end()-1;
+            let ssa_name = strip_quotes(a, b, line);
+            current_blocks = parse_func(i, ssa_name, module, &mut ir_map);
         }
     }
 
@@ -141,4 +126,9 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
 fn main() {
     let ctx = Context::create();
     let module = get_test_ir(&ctx);
+    let lines = get_lines();
+    let ir_map = parse_ir(&lines, &module);
+    for (_, v) in &ir_map{
+        println!("{}", v.name);
+    }
 }

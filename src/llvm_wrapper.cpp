@@ -1,5 +1,8 @@
 #include "llvm_cppwrapper.h"
+using namespace llvm;
 
-char *get_name(LLVMValueRef inst){
-    return get_name_wrapper(inst);
+extern "C"{
+    const char *get_name(LLVMValueRef inst){
+        return unwrap(inst)->getName().data();
+    }
 }
