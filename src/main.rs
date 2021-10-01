@@ -63,7 +63,7 @@ fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir
     return (*next_inst, true);
 }
 
-fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
+fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: &mut Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
     for block in current_blocks.iter() {
         if ssa_name == block.get_name().to_str().unwrap() {
             ir_map.insert(LLVMValue::BasicBlock(*block),
@@ -111,7 +111,7 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
             let a = name_bounds.start();
             let b = name_bounds.end()-1;
             let ssa_name = strip_quotes(a, b, line);
-            next_inst = parse_block(i, ssa_name, current_blocks.clone(), &mut ir_map);
+            next_inst = parse_block(i, ssa_name, &mut current_blocks, &mut ir_map);
         }
         else if let Some(name_bounds) = func.find(line) {
             let a = name_bounds.start()+1;
