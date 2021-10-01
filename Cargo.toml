@@ -3,9 +3,6 @@ name = "llook"
 version = "0.1.0"
 edition = "2018"
 
-#[build]
-#rustflags = ["-lLLVM-12", "-lm","-ldl","-lc","-lpthread","-lutil","-lgcc_s", "-C", "link-args=-L/usr/lib/llvm/12/lib64"]
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

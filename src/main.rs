@@ -8,7 +8,7 @@ use inkwell::context::Context;
 use inkwell::values::*;
 use inkwell::basic_block::BasicBlock;
 use std::collections::HashMap;
-use regex::{Match, Regex};
+use regex::{Regex};
 use either::Either;
 
 struct TextData<'a> {
@@ -52,6 +52,7 @@ extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
 fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
     let inst = next_inst.unwrap();
+    //TODO: free ssa_name somewhere
     let ssa_name = unsafe { CStr::from_ptr(get_name(inst)).to_str().unwrap() };
     ir_map.insert(LLVMValue::Instruction(inst),
                   TextData { line_number: i, name: ssa_name });
@@ -63,14 +64,14 @@ fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir
 }
 
 fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
-    for block in current_blocks.iter()  {
+    for block in current_blocks.iter() {
         if ssa_name == block.get_name().to_str().unwrap() {
             ir_map.insert(LLVMValue::BasicBlock(*block),
                           TextData { line_number: i, name: ssa_name });
             return block.get_first_instruction();
         }
     }
-    return None;
+    panic!("Block name not found in module!");
 }
 
 fn parse_func<'a, 'b>(i: usize, ssa_name: &'a str, module: &'b Module, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<BasicBlock<'b>>    {
@@ -90,15 +91,15 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
 
 fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
-    let block = Regex::new(r#"^(".*"|.*):"#).unwrap();
-    let func = Regex::new(r#"^define.*@(".*"|.*)\("#).unwrap();
+    let block = Regex::new(r#"^(".*"|\w*):"#).unwrap();
+    let func = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
     let mut current_blocks: Vec<BasicBlock> = Vec::new();
     let mut in_block = false;
     let mut next_inst: Option<InstructionValue> = None;
 
-    for (i, line) in lines.iter().enumerate()   {
+    for (mut i, line) in lines.iter().enumerate()   {
+        i += 1; //enumerate starts at 0 but line numbers start at 1
         let line = line.trim_start_matches(|c: char| c.is_whitespace());
-        println!("{}", line);
         if in_block {
             //tuple unpacking for assignment is still unstable :(
             let ret = parse_inst(i, &mut next_inst, &mut ir_map);
@@ -108,7 +109,7 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
         else if let Some(name_bounds) = block.find(line)    {
             in_block = true;
             let a = name_bounds.start();
-            let b = name_bounds.end()-2;
+            let b = name_bounds.end()-1;
             let ssa_name = strip_quotes(a, b, line);
             next_inst = parse_block(i, ssa_name, current_blocks.clone(), &mut ir_map);
         }
@@ -129,6 +130,7 @@ fn main() {
     let lines = get_lines();
     let ir_map = parse_ir(&lines, &module);
     for (_, v) in &ir_map{
-        println!("{}", v.name);
+        println!("{}, {}", v.line_number, v.name);
+        break;
     }
 }
