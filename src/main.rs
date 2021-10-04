@@ -1,3 +1,4 @@
+use core::fmt;
 use std::ffi::CStr;
 use std::fs::read_to_string;
 use std::os::raw::c_char;
@@ -16,6 +17,16 @@ struct TextData<'a> {
     name: &'a str,
 }
 
+impl fmt::Display for TextData<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
+        let name = match self.name.len()  {
+            0 => "<nameless instruction>",
+            _ => self.name,
+        };
+        write!(f, "{}, {}", self.line_number, name)
+    }
+}
+
 #[derive(PartialEq, Eq, Hash)]
 enum LLVMValue<'a>  {
     Basic(BasicValueEnum<'a>),
@@ -24,28 +35,26 @@ enum LLVMValue<'a>  {
     Function(FunctionValue<'a>),
 }
 
-fn get_test_ir(ctx: &Context) -> Module  {
-    Command::new("llvm-as").arg("/home/muke/Programming/llook/test.ll");
-    let p = Path::new("/home/muke/Programming/llook/test.bc");
-    return Module::parse_bitcode_from_path(p, ctx).unwrap();
-}
-
 //TODO: investigate what happens when an operand is a function
-fn get_defs<'a>(inst: &'a InstructionValue) -> Vec<LLVMValue<'a>>   {
-    return (0..inst.get_num_operands()).map(|i|
-                                            match inst.get_operand(i).unwrap()  {
-                                                Either::Left(op) => LLVMValue::Basic(op),
-                                                Either::Right(op) => LLVMValue::BasicBlock(op),
-                                            })
-                                       .collect::<Vec<_>>();
-}
-
-fn get_lines() -> Vec<String>  {
-    let path = Path::new("/home/muke/Programming/llook/test.ll");
-    let raw = read_to_string(path).unwrap();
-    return raw.lines()
-              .map(String::from)
-              .collect::<Vec<_>>();
+fn get_defs<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<&'c TextData<'a>>   {
+    (0..inst.get_num_operands())
+        .filter(|n|
+                match inst.get_operand(*n).unwrap()  {
+                    Either::Left(op) =>
+                        match op.as_instruction_value() {
+                            Some(_) => true,
+                            None => false,
+                    },
+                    Either::Right(_) => true,
+                }
+        )
+        .map(|n|
+             ir_map.get(&match inst.get_operand(n).unwrap() {
+                 Either::Left(op) => LLVMValue::Instruction(op.as_instruction_value().unwrap()),
+                 Either::Right(op) => LLVMValue::BasicBlock(op),
+             }).unwrap()
+        )
+        .collect::<Vec<_>>()
 }
 
 extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
@@ -91,7 +100,7 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
 
 fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
-    let block = Regex::new(r#"^(".*"|\w*):"#).unwrap();
+    let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
     let func = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
     let mut current_blocks: Vec<BasicBlock> = Vec::new();
     let mut in_block = false;
@@ -124,13 +133,41 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
     return ir_map;
 }
 
+fn get_test_inst<'a>(module: &Module<'a>) -> InstructionValue<'a>   {
+    module.get_first_function()
+          .unwrap()
+          .get_first_basic_block()
+          .unwrap()
+          .get_terminator()
+          .unwrap()
+          .get_previous_instruction()
+          .unwrap()
+}
+
+fn get_test_ir(ctx: &Context) -> Module  {
+    Command::new("llvm-as").arg("/home/muke/Programming/llook/test.ll");
+    let p = Path::new("/home/muke/Programming/llook/test.bc");
+    return Module::parse_bitcode_from_path(p, ctx).unwrap();
+}
+
+fn get_test_lines() -> Vec<String>  {
+    let path = Path::new("/home/muke/Programming/llook/test.ll");
+    let raw = read_to_string(path).unwrap();
+    return raw.lines()
+              .map(String::from)
+              .collect::<Vec<_>>();
+}
+
 fn main() {
     let ctx = Context::create();
     let module = get_test_ir(&ctx);
-    let lines = get_lines();
+    let lines = get_test_lines();
     let ir_map = parse_ir(&lines, &module);
-    for (_, v) in &ir_map{
-        println!("{}, {}", v.line_number, v.name);
-        break;
+    let inst = get_test_inst(&module);
+    let text_data = ir_map.get(&LLVMValue::Instruction(inst)).unwrap();
+    println!("instruction: {}", text_data);
+    let text_data = get_defs(&inst, &ir_map);
+    for data in text_data.iter()    {
+        println!("{}", data);
     }
 }
