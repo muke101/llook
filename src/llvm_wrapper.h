@@ -1,5 +1,10 @@
-#include "llvm-c/Core.h"
+#include <llvm-c/Core.h>
+#include <llvm/IR/Instruction.h>
 
+#ifdef __cplusplus
+extern "C"{
+#endif
 const char *get_name(LLVMValueRef inst);
-
-const char *get_name_wrapper(LLVMValueRef inst);
+#ifdef __cplusplus
+}
+#endif

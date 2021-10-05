@@ -35,7 +35,18 @@ enum LLVMValue<'a>  {
     Function(FunctionValue<'a>),
 }
 
-//TODO: investigate what happens when an operand is a function
+// fn get_preds<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<&'c TextData<'a>>   {
+
+// }
+
+// fn is_phi(inst: &InstructionValue) -> bool {
+//     let any_value = inst.as_any_value_enum().into_phi_value();
+//     match any_value {
+//         PhiValue{} => true,
+//         _ => false
+//     }
+// }
+
 fn get_defs<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<&'c TextData<'a>>   {
     (0..inst.get_num_operands())
         .filter(|n|
@@ -43,16 +54,18 @@ fn get_defs<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValu
                     Either::Left(op) =>
                         match op.as_instruction_value() {
                             Some(_) => true,
-                            None => false,
-                    },
-                    Either::Right(_) => true,
+                            None => false
+                        },
+                    Either::Right(_) => true
                 }
         )
         .map(|n|
-             ir_map.get(&match inst.get_operand(n).unwrap() {
-                 Either::Left(op) => LLVMValue::Instruction(op.as_instruction_value().unwrap()),
-                 Either::Right(op) => LLVMValue::BasicBlock(op),
-             }).unwrap()
+             ir_map.get(
+                 &match inst.get_operand(n).unwrap() {
+                     Either::Left(op) => LLVMValue::Instruction(op.as_instruction_value().unwrap()),
+                     Either::Right(op) => LLVMValue::BasicBlock(op)
+                 }
+             ).unwrap()
         )
         .collect::<Vec<_>>()
 }
@@ -101,7 +114,8 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
 fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
     let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
-    let func = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
+    let func = Regex::new(r"^define ").unwrap();
+    let func_name = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
     let mut current_blocks: Vec<BasicBlock> = Vec::new();
     let mut in_block = false;
     let mut next_inst: Option<InstructionValue> = None;
@@ -122,7 +136,8 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
             let ssa_name = strip_quotes(a, b, line);
             next_inst = parse_block(i, ssa_name, &mut current_blocks, &mut ir_map);
         }
-        else if let Some(name_bounds) = func.find(line) {
+        else if func.is_match(line)  {
+            let name_bounds = func_name.find(line).unwrap();
             let a = name_bounds.start()+1;
             let b = name_bounds.end()-1;
             let ssa_name = strip_quotes(a, b, line);
@@ -138,9 +153,7 @@ fn get_test_inst<'a>(module: &Module<'a>) -> InstructionValue<'a>   {
           .unwrap()
           .get_first_basic_block()
           .unwrap()
-          .get_terminator()
-          .unwrap()
-          .get_previous_instruction()
+          .get_first_instruction()
           .unwrap()
 }
 

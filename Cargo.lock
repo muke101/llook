@@ -87,6 +87,7 @@ dependencies = [
  "cc",
  "either",
  "inkwell",
+ "llvm-sys",
  "regex",
 ]
 

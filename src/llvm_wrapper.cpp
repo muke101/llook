@@ -1,4 +1,4 @@
-#include "llvm_cppwrapper.h"
+#include "llvm_wrapper.h"
 using namespace llvm;
 
 extern "C"{
