@@ -1,1 +1,4 @@
 /target
+test.bc
+test.ll
+/inkwell

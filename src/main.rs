@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use regex::{Regex};
 use either::Either;
 
-struct TextData<'a> {
+struct TextData<'inp> {
     line_number: usize,
-    name: &'a str,
+    name: &'inp str,
 }
 
 impl fmt::Display for TextData<'_> {
@@ -28,26 +28,18 @@ impl fmt::Display for TextData<'_> {
 }
 
 #[derive(PartialEq, Eq, Hash)]
-enum LLVMValue<'a>  {
-    Basic(BasicValueEnum<'a>),
-    Instruction(InstructionValue<'a>),
-    BasicBlock(BasicBlock<'a>),
-    Function(FunctionValue<'a>),
+enum LLVMValue<'inp>  {
+    Basic(BasicValueEnum<'inp>),
+    Instruction(InstructionValue<'inp>),
+    BasicBlock(BasicBlock<'inp>),
+    Function(FunctionValue<'inp>),
 }
 
-// fn get_preds<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<&'c TextData<'a>>   {
+// fn get_preds<'inp, 'ctx, 'c>(inst: &'ctx InstructionValue, ir_map: &'c HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<&'c TextData<'inp>>   {
 
 // }
 
-// fn is_phi(inst: &InstructionValue) -> bool {
-//     let any_value = inst.as_any_value_enum().into_phi_value();
-//     match any_value {
-//         PhiValue{} => true,
-//         _ => false
-//     }
-// }
-
-fn get_defs<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<&'c TextData<'a>>   {
+fn get_defs<'inp, 'b, 'ctx>(inst: &'ctx InstructionValue, ir_map: &'b HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<&'b TextData<'inp>>   {
     (0..inst.get_num_operands())
         .filter(|n|
                 match inst.get_operand(*n).unwrap()  {
@@ -72,9 +64,10 @@ fn get_defs<'a, 'b, 'c>(inst: &'b InstructionValue, ir_map: &'c HashMap<LLVMValu
 
 extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
-fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> (Option<InstructionValue<'b>>, bool)   {
+fn parse_inst<'inp, 'ctx>(i: usize, next_inst: &mut Option<InstructionValue<'ctx>>, ir_map: &mut HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> (Option<InstructionValue<'ctx>>, bool)   {
     let inst = next_inst.unwrap();
-    //TODO: free ssa_name somewhere
+    //FIXME: pass LLVMValueRef
+    //ssa_name owned by context
     let ssa_name = unsafe { CStr::from_ptr(get_name(inst)).to_str().unwrap() };
     ir_map.insert(LLVMValue::Instruction(inst),
                   TextData { line_number: i, name: ssa_name });
@@ -85,7 +78,7 @@ fn parse_inst<'a, 'b>(i: usize, next_inst: &mut Option<InstructionValue<'b>>, ir
     return (*next_inst, true);
 }
 
-fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: &mut Vec<BasicBlock<'b>>, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Option<InstructionValue<'b>>   {
+fn parse_block<'inp, 'ctx>(i: usize, ssa_name: &'inp str, current_blocks: &mut Vec<BasicBlock<'ctx>>, ir_map: &mut HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Option<InstructionValue<'ctx>>   {
     for block in current_blocks.iter() {
         if ssa_name == block.get_name().to_str().unwrap() {
             ir_map.insert(LLVMValue::BasicBlock(*block),
@@ -96,7 +89,7 @@ fn parse_block<'a, 'b>(i: usize, ssa_name: &'a str, current_blocks: &mut Vec<Bas
     panic!("Block name not found in module!");
 }
 
-fn parse_func<'a, 'b>(i: usize, ssa_name: &'a str, module: &'b Module, ir_map: &mut HashMap<LLVMValue<'b>, TextData<'a>>) -> Vec<BasicBlock<'b>>    {
+fn parse_func<'inp, 'ctx>(i: usize, ssa_name: &'inp str, module: &'ctx Module, ir_map: &mut HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<BasicBlock<'ctx>>    {
     let func = module.get_function(ssa_name).unwrap();
     ir_map.insert(LLVMValue::Function(func),
                   TextData { line_number: i, name: ssa_name });
@@ -111,7 +104,7 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
     return ssa_name;
 }
 
-fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMValue<'b>, TextData<'a>>   {
+fn parse_ir<'inp, 'ctx>(lines: &'inp Vec<String>, module: &'ctx Module) -> HashMap<LLVMValue<'ctx>, TextData<'inp>>   {
     let mut ir_map: HashMap<LLVMValue, TextData> = HashMap::new();
     let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
     let func = Regex::new(r"^define ").unwrap();
@@ -148,23 +141,26 @@ fn parse_ir<'a, 'b>(lines: &'a Vec<String>, module: &'b Module) -> HashMap<LLVMV
     return ir_map;
 }
 
-fn get_test_inst<'a>(module: &Module<'a>) -> InstructionValue<'a>   {
+fn get_test_inst<'ctx>(module: &Module<'ctx>) -> InstructionValue<'ctx>   {
     module.get_first_function()
           .unwrap()
           .get_first_basic_block()
           .unwrap()
-          .get_first_instruction()
+          .get_last_instruction()
           .unwrap()
 }
 
-fn get_test_ir(ctx: &Context) -> Module  {
-    Command::new("llvm-as").arg("/home/muke/Programming/llook/test.ll");
-    let p = Path::new("/home/muke/Programming/llook/test.bc");
+fn get_test_ir<'ctx>(ctx: &'ctx Context, ir_name: &str) -> Module<'ctx>  {
+    let ll_path = format!("/home/muke/Programming/llook/test_ir/{}.ll", ir_name);
+    let bc_path = format!("/home/muke/Programming/llook/test_ir/{}.bc", ir_name);
+    Command::new("llvm-as").arg(ll_path);
+    let p = Path::new(&bc_path);
     return Module::parse_bitcode_from_path(p, ctx).unwrap();
 }
 
-fn get_test_lines() -> Vec<String>  {
-    let path = Path::new("/home/muke/Programming/llook/test.ll");
+fn get_test_lines(ir_name: &str) -> Vec<String>  {
+    let ll_path = format!("/home/muke/Programming/llook/test_ir/{}.ll", ir_name);
+    let path = Path::new(&ll_path);
     let raw = read_to_string(path).unwrap();
     return raw.lines()
               .map(String::from)
@@ -172,9 +168,10 @@ fn get_test_lines() -> Vec<String>  {
 }
 
 fn main() {
-    let ctx = Context::create();
-    let module = get_test_ir(&ctx);
-    let lines = get_test_lines();
+    let ctx = Context::create(); //'ctx lifetime
+    let ir_name = "test_basic";
+    let module = get_test_ir(&ctx, ir_name);
+    let lines = get_test_lines(ir_name); //'inp lifetime
     let ir_map = parse_ir(&lines, &module);
     let inst = get_test_inst(&module);
     let text_data = ir_map.get(&LLVMValue::Instruction(inst)).unwrap();
