@@ -9,7 +9,7 @@ use inkwell::context::Context;
 use inkwell::values::*;
 use inkwell::basic_block::BasicBlock;
 use std::collections::HashMap;
-use regex::{Regex};
+use regex::Regex;
 use either::Either;
 
 struct TextData<'inp> {
@@ -27,19 +27,66 @@ impl fmt::Display for TextData<'_> {
     }
 }
 
+
 #[derive(PartialEq, Eq, Hash)]
-enum LLVMValue<'inp>  {
-    Basic(BasicValueEnum<'inp>),
-    Instruction(InstructionValue<'inp>),
-    BasicBlock(BasicBlock<'inp>),
-    Function(FunctionValue<'inp>),
+enum LLVMValue<'ctx>  {
+    Basic(BasicValueEnum<'ctx>),
+    Instruction(InstructionValue<'ctx>),
+    BasicBlock(BasicBlock<'ctx>),
+    Function(FunctionValue<'ctx>),
 }
 
-// fn get_preds<'inp, 'ctx, 'c>(inst: &'ctx InstructionValue, ir_map: &'c HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<&'c TextData<'inp>>   {
+impl<'ctx> LLVMValue<'ctx> {
+    fn get_first_use(&self) -> Option<BasicValueUse>    {
+        match self  {
+            LLVMValue::Basic(val) => val.get_first_use(),
+            LLVMValue::Instruction(val) => val.get_first_use(),
+            LLVMValue::BasicBlock(val) => val.get_first_use(),
+            LLVMValue::Function(_) => panic!("function uses unimplemented")
+        }
+    }
 
-// }
+    fn get_next_use(&self, last_use: BasicValueUse<'ctx>) -> Option<BasicValueUse<'ctx>>    {
+        match self  {
+            LLVMValue::Basic(_) => last_use.get_next_use(),
+            LLVMValue::Instruction(_) => last_use.get_next_use(),
+            LLVMValue::BasicBlock(_) => last_use.get_next_use(),
+            LLVMValue::Function(_) => panic!("function uses unimplemented")
+        }
+    }
+}
 
-fn get_defs<'inp, 'b, 'ctx>(inst: &'ctx InstructionValue, ir_map: &'b HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<&'b TextData<'inp>>   {
+//TODO: get working with functions
+fn get_uses<'inp, 'a, 'ctx>(val: &'ctx LLVMValue, ir_map: &'a HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<usize>   {
+    let mut current_use = val.get_first_use();
+    let mut line_numbers: Vec<usize> = Vec::new();
+
+    while current_use != None   {
+        let user = current_use.unwrap().get_user();
+        let user_inst = match user  {
+            AnyValueEnum::FloatValue(v) => v.as_instruction(),
+            AnyValueEnum::IntValue(v) => v.as_instruction(),
+            AnyValueEnum::PointerValue(v) => v.as_instruction(),
+            AnyValueEnum::StructValue(v) => v.as_instruction(),
+            AnyValueEnum::ArrayValue(v) => v.as_instruction(),
+            AnyValueEnum::VectorValue(v) => v.as_instruction(),
+            AnyValueEnum::PhiValue(v) => Some(v.as_instruction()),
+            AnyValueEnum::InstructionValue(v) => Some(v),
+            AnyValueEnum::FunctionValue(_) => None
+        };
+        if user_inst == None    {
+            panic!("user is not an instruction");
+        }
+        let user_inst = LLVMValue::Instruction(user_inst.unwrap());
+        line_numbers.push(ir_map.get(&user_inst).unwrap().line_number);
+        current_use = current_use.unwrap().get_next_use();
+    }
+
+    return line_numbers;
+}
+
+//TODO: get working with phi nodes, function names and function args
+fn get_defs<'inp, 'a, 'ctx>(inst: &'ctx InstructionValue, ir_map: &'a HashMap<LLVMValue<'ctx>, TextData<'inp>>) -> Vec<&'a TextData<'inp>>   {
     (0..inst.get_num_operands())
         .filter(|n|
                 match inst.get_operand(*n).unwrap()  {
@@ -148,6 +195,8 @@ fn get_test_inst<'ctx>(module: &Module<'ctx>) -> InstructionValue<'ctx>   {
           .unwrap()
           .get_last_instruction()
           .unwrap()
+          .get_previous_instruction()
+          .unwrap()
 }
 
 fn get_test_ir<'ctx>(ctx: &'ctx Context, ir_name: &str) -> Module<'ctx>  {
@@ -180,4 +229,7 @@ fn main() {
     for data in text_data.iter()    {
         println!("{}", data);
     }
+    let line_numbers = get_uses(&LLVMValue::Instruction(inst), &ir_map);
+    line_numbers.iter().for_each(|n| println!("{}", n));
+
 }
