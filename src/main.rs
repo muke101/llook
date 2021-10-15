@@ -49,7 +49,6 @@ impl<'ctx> LLVMValue<'ctx> {
 extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
 struct IR<'inp, 'ctx>   {
-    module: &'ctx Module<'ctx>,
     lines: &'inp Vec<String>,
     ir_map: HashMap<LLVMValue<'ctx>, TextData<'inp>>
 }
@@ -57,8 +56,8 @@ struct IR<'inp, 'ctx>   {
 impl<'inp, 'ctx> IR<'inp, 'ctx> {
 
     fn new(input_module: &'ctx Module<'ctx>, input_lines: &'inp Vec<String>) -> Self {
-        let mut ir = IR { module: input_module,  lines: input_lines, ir_map: HashMap::new()};
-        ir.parse_ir();
+        let mut ir = IR { lines: input_lines, ir_map: HashMap::new()};
+        ir.parse_ir(input_module);
         return ir;
     }
 
@@ -140,14 +139,14 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         panic!("Block name not found in module!");
     }
 
-    fn parse_func(&mut self, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
-        let func = self.module.get_function(ssa_name).unwrap();
+    fn parse_func(&mut self, module: &'ctx Module<'ctx>, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
+        let func = module.get_function(ssa_name).unwrap();
         self.ir_map.insert(LLVMValue::Function(func),
                            TextData { line_number: i, name: ssa_name });
         return func.get_basic_blocks();
     }
 
-    fn parse_ir(&mut self)   {
+    fn parse_ir(&mut self, module: &'ctx Module<'ctx>)   {
         let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
         let func = Regex::new(r"^define ").unwrap();
         let func_name = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
@@ -176,7 +175,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
                 let a = name_bounds.start()+1;
                 let b = name_bounds.end()-1;
                 let ssa_name = strip_quotes(a, b, line);
-                current_blocks = self.parse_func(i, ssa_name);
+                current_blocks = self.parse_func(module, i, ssa_name);
             }
         }
     }
@@ -234,8 +233,8 @@ fn main() {
     let module = get_test_ir(&ctx, ir_name);
     let lines = get_test_lines(ir_name); //'inp lifetime
     let ir = IR::new(&module, &lines);
-    let inst = get_test_inst(&ir.module);
-    let basic_block = get_test_block(&ir.module);
+    let inst = get_test_inst(&module);
+    let basic_block = get_test_block(&module);
     let text_data = ir.ir_map.get(&LLVMValue::Instruction(inst)).unwrap();
     println!("instruction: {}", text_data);
     let text_data = ir.get_defs(&inst);
