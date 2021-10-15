@@ -1,4 +1,5 @@
 use core::fmt;
+use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fs::read_to_string;
 use std::os::raw::c_char;
@@ -14,7 +15,7 @@ use either::Either;
 
 struct TextData<'inp> {
     line_number: usize,
-    name: &'inp str,
+    name: &'inp str
 }
 
 impl fmt::Display for TextData<'_> {
@@ -188,7 +189,6 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
     }
     return ssa_name;
 }
-
 
 fn get_test_inst<'ctx>(module: &Module<'ctx>) -> InstructionValue<'ctx>   {
     module.get_first_function()
