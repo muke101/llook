@@ -1,4 +1,5 @@
 use core::fmt;
+use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fs::read_to_string;
 use std::os::raw::c_char;
@@ -12,16 +13,16 @@ use std::collections::HashMap;
 use regex::Regex;
 use either::Either;
 
-struct TextData<'inp> {
+struct TextData {
     line_number: usize,
-    name: &'inp str,
+    name: String
 }
 
-impl fmt::Display for TextData<'_> {
+impl fmt::Display for TextData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
         let name = match self.name.len()  {
-            0 => "<nameless instruction>",
-            _ => self.name,
+            0 => Cow::from("<nameless instruction>"),
+            _ => Cow::from(&self.name),
         };
         write!(f, "{}, {}", self.line_number, name)
     }
@@ -49,16 +50,15 @@ impl<'ctx> LLVMValue<'ctx> {
 extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
 struct IR<'inp, 'ctx>   {
-    module: &'ctx Module<'ctx>,
     lines: &'inp Vec<String>,
-    ir_map: HashMap<LLVMValue<'ctx>, TextData<'inp>>
+    ir_map: HashMap<LLVMValue<'ctx>, TextData>
 }
 
 impl<'inp, 'ctx> IR<'inp, 'ctx> {
 
-    fn new(input_module: &'ctx Module<'ctx>, input_lines: &'inp Vec<String>) -> Self {
-        let mut ir = IR { module: input_module,  lines: input_lines, ir_map: HashMap::new()};
-        ir.parse_ir();
+    fn new(input_module: Module<'ctx>, input_lines: &'inp Vec<String>) -> Self {
+        let mut ir = IR { lines: input_lines, ir_map: HashMap::new()};
+        ir.parse_ir(input_module);
         return ir;
     }
 
@@ -92,7 +92,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
     }
 
     //TODO: get working with phi nodes, function names and function args
-    fn get_defs(&self, inst: &'ctx InstructionValue) -> Vec<&TextData<'inp>>   {
+    fn get_defs(&self, inst: &'ctx InstructionValue) -> Vec<&TextData>   {
         (0..inst.get_num_operands())
             .filter(|n|
                     match inst.get_operand(*n).unwrap()  {
@@ -121,7 +121,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         //ssa_name owned by context
         let ssa_name = unsafe { CStr::from_ptr(get_name(inst)).to_str().unwrap() };
         self.ir_map.insert(LLVMValue::Instruction(inst),
-                    TextData { line_number: i, name: ssa_name });
+                    TextData { line_number: i, name: ssa_name.to_string() });
         *next_inst = inst.get_next_instruction();
         if next_inst == &None {
             return (*next_inst, false);
@@ -133,21 +133,21 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         for block in current_blocks.iter() {
             if ssa_name == block.get_name().to_str().unwrap() {
                 self.ir_map.insert(LLVMValue::BasicBlock(*block),
-                                   TextData { line_number: i, name: ssa_name });
+                                   TextData { line_number: i, name: ssa_name.to_string() });
                 return block.get_first_instruction();
             }
         }
         panic!("Block name not found in module!");
     }
 
-    fn parse_func(&mut self, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
-        let func = self.module.get_function(ssa_name).unwrap();
+    fn parse_func(&mut self, module: Module<'ctx>, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
+        let func = module.get_function(ssa_name).unwrap();
         self.ir_map.insert(LLVMValue::Function(func),
-                           TextData { line_number: i, name: ssa_name });
+                           TextData { line_number: i, name: ssa_name.to_string() });
         return func.get_basic_blocks();
     }
 
-    fn parse_ir(&mut self)   {
+    fn parse_ir(&mut self, module: Module<'ctx>)   {
         let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
         let func = Regex::new(r"^define ").unwrap();
         let func_name = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
@@ -176,7 +176,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
                 let a = name_bounds.start()+1;
                 let b = name_bounds.end()-1;
                 let ssa_name = strip_quotes(a, b, line);
-                current_blocks = self.parse_func(i, ssa_name);
+                current_blocks = self.parse_func(module.clone(), i, ssa_name);
             }
         }
     }
@@ -189,7 +189,6 @@ fn strip_quotes(a: usize, b: usize, line: &str) -> &str   {
     }
     return ssa_name;
 }
-
 
 fn get_test_inst<'ctx>(module: &Module<'ctx>) -> InstructionValue<'ctx>   {
     module.get_first_function()
@@ -233,9 +232,9 @@ fn main() {
     let ir_name = "test_basic";
     let module = get_test_ir(&ctx, ir_name);
     let lines = get_test_lines(ir_name); //'inp lifetime
-    let ir = IR::new(&module, &lines);
-    let inst = get_test_inst(&ir.module);
-    let basic_block = get_test_block(&ir.module);
+    let ir = IR::new(module.clone(), &lines);
+    let inst = get_test_inst(&module);
+    let basic_block = get_test_block(&module);
     let text_data = ir.ir_map.get(&LLVMValue::Instruction(inst)).unwrap();
     println!("instruction: {}", text_data);
     let text_data = ir.get_defs(&inst);
