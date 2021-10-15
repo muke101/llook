@@ -13,16 +13,16 @@ use std::collections::HashMap;
 use regex::Regex;
 use either::Either;
 
-struct TextData {
+struct TextData<'inp> {
     line_number: usize,
-    name: String
+    name: &'inp str
 }
 
-impl fmt::Display for TextData {
+impl fmt::Display for TextData<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result  {
         let name = match self.name.len()  {
-            0 => Cow::from("<nameless instruction>"),
-            _ => Cow::from(&self.name),
+            0 => "<nameless instruction>",
+            _ => self.name,
         };
         write!(f, "{}, {}", self.line_number, name)
     }
@@ -51,7 +51,7 @@ extern "C"  { fn get_name(isnt: InstructionValue) -> *const c_char; }
 
 struct IR<'inp, 'ctx>   {
     lines: &'inp Vec<String>,
-    ir_map: HashMap<LLVMValue<'ctx>, TextData>
+    ir_map: HashMap<LLVMValue<'ctx>, TextData<'inp>>
 }
 
 impl<'inp, 'ctx> IR<'inp, 'ctx> {
@@ -92,7 +92,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
     }
 
     //TODO: get working with phi nodes, function names and function args
-    fn get_defs(&self, inst: &'ctx InstructionValue) -> Vec<&TextData>   {
+    fn get_defs(&self, inst: &'ctx InstructionValue) -> Vec<&TextData<'inp>>   {
         (0..inst.get_num_operands())
             .filter(|n|
                     match inst.get_operand(*n).unwrap()  {
@@ -121,7 +121,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         //ssa_name owned by context
         let ssa_name = unsafe { CStr::from_ptr(get_name(inst)).to_str().unwrap() };
         self.ir_map.insert(LLVMValue::Instruction(inst),
-                    TextData { line_number: i, name: ssa_name.to_string() });
+                    TextData { line_number: i, name: ssa_name });
         *next_inst = inst.get_next_instruction();
         if next_inst == &None {
             return (*next_inst, false);
@@ -133,7 +133,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         for block in current_blocks.iter() {
             if ssa_name == block.get_name().to_str().unwrap() {
                 self.ir_map.insert(LLVMValue::BasicBlock(*block),
-                                   TextData { line_number: i, name: ssa_name.to_string() });
+                                   TextData { line_number: i, name: ssa_name });
                 return block.get_first_instruction();
             }
         }
@@ -143,7 +143,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
     fn parse_func(&mut self, module: Module<'ctx>, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
         let func = module.get_function(ssa_name).unwrap();
         self.ir_map.insert(LLVMValue::Function(func),
-                           TextData { line_number: i, name: ssa_name.to_string() });
+                           TextData { line_number: i, name: ssa_name });
         return func.get_basic_blocks();
     }
 
