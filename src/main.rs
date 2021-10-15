@@ -1,5 +1,4 @@
 use core::fmt;
-use std::borrow::Cow;
 use std::ffi::CStr;
 use std::fs::read_to_string;
 use std::os::raw::c_char;
@@ -13,6 +12,7 @@ use std::collections::HashMap;
 use regex::Regex;
 use either::Either;
 
+//FIXME: name can be derived from objects with both 'inp and 'ctx lifetimes actually
 struct TextData<'inp> {
     line_number: usize,
     name: &'inp str
@@ -91,7 +91,7 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         return line_numbers;
     }
 
-    //TODO: get working with phi nodes, function names and function args
+    //TODO: get working with function names and function args
     fn get_defs(&self, inst: &'ctx InstructionValue) -> Vec<&TextData<'inp>>   {
         (0..inst.get_num_operands())
             .filter(|n|
@@ -113,6 +113,15 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
                 ).unwrap()
             )
             .collect::<Vec<_>>()
+    }
+
+    //TODO: once you have access to value refs implement basic blocks
+    // also consider just moving this into a trait to get rid of the either enum if it doesn't need self
+    fn get_preds(self, val: &Either<PhiValue<'ctx>, BasicBlock<'ctx>>) -> Vec<BasicBlock<'ctx>> {
+        match val   {
+            Either::Left(phi) => (0..phi.count_incoming()).map(|i| phi.get_incoming(i).unwrap().1).collect::<Vec<_>>(),
+            Either::Right(block) => panic!("unimplemented")
+        }
     }
 
     fn parse_inst(&mut self, i: usize, next_inst: &mut Option<InstructionValue<'ctx>>) -> (Option<InstructionValue<'ctx>>, bool)   {
