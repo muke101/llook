@@ -56,7 +56,7 @@ struct IR<'inp, 'ctx>   {
 
 impl<'inp, 'ctx> IR<'inp, 'ctx> {
 
-    fn new(input_module: &'ctx Module<'ctx>, input_lines: &'inp Vec<String>) -> Self {
+    fn new(input_module: *const Module<'ctx>, input_lines: &'inp Vec<String>) -> Self {
         let mut ir = IR { lines: input_lines, ir_map: HashMap::new()};
         ir.parse_ir(input_module);
         return ir;
@@ -149,14 +149,14 @@ impl<'inp, 'ctx> IR<'inp, 'ctx> {
         panic!("Block name not found in module!");
     }
 
-    fn parse_func(&mut self, module: &'ctx Module<'ctx>, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
-        let func = module.get_function(ssa_name).unwrap();
+    fn parse_func(&mut self, module: *const Module<'ctx>, i: usize, ssa_name: &'inp str) -> Vec<BasicBlock<'ctx>>    {
+        let func = unsafe { module.as_ref().unwrap().get_function(ssa_name).unwrap() };
         self.ir_map.insert(LLVMValue::Function(func),
                            TextData { line_number: i, name: ssa_name });
         return func.get_basic_blocks();
     }
 
-    fn parse_ir(&mut self, module: &'ctx Module<'ctx>)   {
+    fn parse_ir(&mut self, module: *const Module<'ctx>)   {
         let block = Regex::new(r#"^(".*"|(\w|\.)*):"#).unwrap();
         let func = Regex::new(r"^define ").unwrap();
         let func_name = Regex::new(r#"@(".*"|\w*)\("#).unwrap();
@@ -241,7 +241,7 @@ fn main() {
     let ir_name = "test_basic";
     let module = get_test_ir(&ctx, ir_name);
     let lines = get_test_lines(ir_name); //'inp lifetime
-    let ir = IR::new(&module, &lines);
+    let ir = IR::new(&module as *const Module, &lines);
     let inst = get_test_inst(&module);
     let basic_block = get_test_block(&module);
     let text_data = ir.ir_map.get(&LLVMValue::Instruction(inst)).unwrap();
